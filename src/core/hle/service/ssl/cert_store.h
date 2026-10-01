@@ -7,6 +7,7 @@
 #include <span>
 #include <vector>
 
+#include "core/file_sys/vfs/vfs_types.h"
 #include "core/hle/result.h"
 #include "core/hle/service/ssl/ssl_types.h"
 
@@ -19,7 +20,12 @@ namespace Service::SSL {
 class CertStore {
 public:
     explicit CertStore(Core::System& system);
+    explicit CertStore(const FileSys::VirtualFile& file);
     ~CertStore();
+
+    void SetInterfaceVersion(u32 version) {
+        interface_version = version;
+    }
 
     Result GetCertificates(u32* out_num_entries, std::span<u8> out_data,
                            std::span<const CaCertificateId> certificate_ids);
@@ -27,6 +33,7 @@ public:
                                  std::span<const CaCertificateId> certificate_ids);
 
 private:
+    void Load(const FileSys::VirtualFile& file);
     template <typename F>
     void ForEachCertificate(std::span<const CaCertificateId> certs, F&& f);
 
@@ -37,6 +44,7 @@ private:
     };
 
     std::map<CaCertificateId, Certificate> m_certs;
+    u32 interface_version{};
 };
 
 } // namespace Service::SSL

@@ -8,6 +8,8 @@
 namespace Service::SSL {
 
 enum class CaCertificateId : s32 {
+    // Firmware 23 accepts this selector without system-only (0x8000) entries.
+    AllExcludingSystem = -2,
     All = -1,
     NintendoCAG3 = 1,
     NintendoClass2CAG3 = 2,
@@ -40,39 +42,42 @@ enum class CaCertificateId : s32 {
     GoDaddyRootCertificateAuthorityG2 = 1025,
     StarfieldClass2CertificationAuthority = 1026,
     StarfieldRootCertificateAuthorityG2 = 1027,
-    thawtePrimaryRootCAG3 = 1028,  // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
-    thawtePrimaryRootCA = 1029,     // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
-    VeriSignClass3PublicPrimaryCertificationAuthorityG3 = 1030,  // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
-    VeriSignClass3PublicPrimaryCertificationAuthorityG5 = 1031,  // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
-    VeriSignUniversalRootCertificationAuthority = 1032,           // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
-    DSTRootCAX3 = 1033,  // [6.0.0+]
-    USERTrustRsaCertificationAuthority = 1034,  // [10.0.3+]
-    ISRGRootX10 = 1035,  // [10.1.0+]
-    USERTrustEccCertificationAuthority = 1036,  // [10.1.0+]
-    COMODORsaCertificationAuthority = 1037,     // [10.1.0+]
-    COMODOEccCertificationAuthority = 1038,     // [10.1.0+]
-    AmazonRootCA2 = 1039,  // [11.0.0+]
-    AmazonRootCA3 = 1040,  // [11.0.0+]
-    AmazonRootCA4 = 1041,  // [11.0.0+]
-    DigiCertAssuredIDRootG3 = 1042,  // [11.0.0+]
-    DigiCertGlobalRootG3 = 1043,     // [11.0.0+]
-    DigiCertTrustedRootG4 = 1044,    // [11.0.0+]
-    EntrustRootCertificationAuthorityEC1 = 1045,  // [11.0.0+]
-    EntrustRootCertificationAuthorityG4 = 1046,   // [11.0.0+]
-    GlobalSignECCRootCAR4 = 1047,  // [11.0.0+]
-    GlobalSignECCRootCAR5 = 1048,  // [11.0.0+]
-    GlobalSignECCRootCAR6 = 1049,  // [11.0.0+]
-    GTSRootR1 = 1050,  // [11.0.0+]
-    GTSRootR2 = 1051,  // [11.0.0+]
-    GTSRootR3 = 1052,  // [11.0.0+]
-    GTSRootR4 = 1053,  // [11.0.0+]
-    SecurityCommunicationRootCA = 1054,  // [12.0.0+]
-    GlobalSignRootE4 = 1055,  // [15.0.0+]
-    GlobalSignRootR4 = 1056,  // [15.0.0+]
-    TTeleSecGlobalRootClass2 = 1057,  // [15.0.0+]
-    DigiCertTLSECCP384RootG5 = 1058,  // [16.0.0+]
-    DigiCertTLSRSA4096RootG5 = 1059,  // [16.0.0+]
-    NintendoTempRootCAG4 = 65536,     // [16.0.0+] ([19.0.0+] Removed)
+    thawtePrimaryRootCAG3 = 1028, // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
+    thawtePrimaryRootCA = 1029,   // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
+    VeriSignClass3PublicPrimaryCertificationAuthorityG3 =
+        1030, // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
+    VeriSignClass3PublicPrimaryCertificationAuthorityG5 =
+        1031, // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
+    VeriSignUniversalRootCertificationAuthority =
+        1032,                                    // [8.0.0+] TrustedCertStatus is EnabledNotTrusted
+    DSTRootCAX3 = 1033,                          // [6.0.0+]
+    USERTrustRsaCertificationAuthority = 1034,   // [10.0.3+]
+    ISRGRootX10 = 1035,                          // [10.1.0+]
+    USERTrustEccCertificationAuthority = 1036,   // [10.1.0+]
+    COMODORsaCertificationAuthority = 1037,      // [10.1.0+]
+    COMODOEccCertificationAuthority = 1038,      // [10.1.0+]
+    AmazonRootCA2 = 1039,                        // [11.0.0+]
+    AmazonRootCA3 = 1040,                        // [11.0.0+]
+    AmazonRootCA4 = 1041,                        // [11.0.0+]
+    DigiCertAssuredIDRootG3 = 1042,              // [11.0.0+]
+    DigiCertGlobalRootG3 = 1043,                 // [11.0.0+]
+    DigiCertTrustedRootG4 = 1044,                // [11.0.0+]
+    EntrustRootCertificationAuthorityEC1 = 1045, // [11.0.0+]
+    EntrustRootCertificationAuthorityG4 = 1046,  // [11.0.0+]
+    GlobalSignECCRootCAR4 = 1047,                // [11.0.0+]
+    GlobalSignECCRootCAR5 = 1048,                // [11.0.0+]
+    GlobalSignECCRootCAR6 = 1049,                // [11.0.0+]
+    GTSRootR1 = 1050,                            // [11.0.0+]
+    GTSRootR2 = 1051,                            // [11.0.0+]
+    GTSRootR3 = 1052,                            // [11.0.0+]
+    GTSRootR4 = 1053,                            // [11.0.0+]
+    SecurityCommunicationRootCA = 1054,          // [12.0.0+]
+    GlobalSignRootE4 = 1055,                     // [15.0.0+]
+    GlobalSignRootR4 = 1056,                     // [15.0.0+]
+    TTeleSecGlobalRootClass2 = 1057,             // [15.0.0+]
+    DigiCertTLSECCP384RootG5 = 1058,             // [16.0.0+]
+    DigiCertTLSRSA4096RootG5 = 1059,             // [16.0.0+]
+    NintendoTempRootCAG4 = 65536,                // [16.0.0+] ([19.0.0+] Removed)
 };
 
 enum class TrustedCertStatus : s32 {

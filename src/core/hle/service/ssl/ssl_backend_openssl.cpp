@@ -10,6 +10,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include "core/hle/service/ssl/imported_pki.h"
 
 #include "common/fs/file.h"
 #include "common/hex_util.h"
@@ -117,6 +118,10 @@ inline void LoadCaCertStore(SSL_CTX* ctx, const char* ca_cert, std::size_t size)
 
 } // namespace
 
+bool ValidateServerPki(const ServerPki& cert) {
+    return static_cast<bool>(ParseImportedPki(cert));
+}
+
 class SSLConnectionBackendOpenSSL final : public SSLConnectionBackend {
 public:
     Result Init() {
@@ -159,7 +164,7 @@ public:
 
     Result SetHostName(const char* hostname) override {
         if (!skip_cert_verification) {
-            if (!SSL_set1_host(ssl, hostname)) {
+            if (!X509_VERIFY_PARAM_set1_host(SSL_get0_param(ssl), hostname, 0)) {
                 LOG_ERROR(Service_SSL, "SSL_set1_host({}) failed", hostname);
                 return CheckOpenSSLErrors();
             }
@@ -189,11 +194,22 @@ public:
                     skip_cert_verification);
         if (skip_cert_verification) {
             SSL_set_verify(ssl, SSL_VERIFY_NONE, nullptr);
-            SSL_set1_host(ssl, nullptr);
+            X509_VERIFY_PARAM_set1_host(SSL_get0_param(ssl), nullptr, 0);
             SSL_set_hostflags(ssl, 0);
         } else {
             SSL_set_verify(ssl, SSL_VERIFY_PEER, nullptr);
         }
+    }
+
+    Result SetServerPki(std::span<const ServerPki> certificates) override {
+        if (certificates.empty()) {
+            return ResultSuccess;
+        }
+        auto store = BuildImportedPkiStore(certificates);
+        if (!store || !SSL_set1_verify_cert_store(ssl, store.get())) {
+            return ResultInternalError;
+        }
+        return ResultSuccess;
     }
 
     Result DoHandshake() override {
