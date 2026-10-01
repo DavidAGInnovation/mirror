@@ -5,10 +5,11 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <span>
-#include <vector>
 #include <variant>
+#include <vector>
 
 #include "common/common_types.h"
 #include "common/socket_types.h"
@@ -40,6 +41,8 @@ public:
     std::optional<std::shared_ptr<Network::SocketBase>> GetSocket(s32 fd);
 
 private:
+    friend struct BSDTestAccess;
+
     /// Maximum number of file descriptors
     static constexpr size_t MAX_FD = 128;
 
@@ -155,6 +158,9 @@ private:
     template <typename Work>
     void ExecuteWork(HLERequestContext& ctx, Work work);
 
+    std::pair<s32, Errno> SelectImpl(s32 nfds, const std::array<std::span<const u8>, 3>& inputs,
+                                     std::array<std::vector<u8>, 3>& outputs, s64 seconds,
+                                     s64 microseconds, bool infinite);
     std::pair<s32, Errno> SocketImpl(Domain domain, Type type, Protocol protocol);
     std::pair<s32, Errno> PollImpl(std::vector<u8>& write_buffer, std::span<const u8> read_buffer, s32 nfds, s32 timeout);
     std::pair<s32, Errno> AcceptImpl(s32 fd, std::vector<u8>& write_buffer);

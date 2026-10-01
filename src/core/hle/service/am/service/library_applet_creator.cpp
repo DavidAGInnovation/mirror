@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/settings.h"
+#include "core/core.h"
 #include "core/hle/kernel/k_transfer_memory.h"
 #include "core/hle/service/am/applet_data_broker.h"
 #include "core/hle/service/am/applet_manager.h"
@@ -104,7 +105,8 @@ std::shared_ptr<ILibraryAppletAccessor> CreateGuestApplet(Core::System& system,
                                                           std::shared_ptr<Applet> caller_applet,
                                                           AppletId applet_id,
                                                           LibraryAppletMode mode) {
-    const auto program_id = static_cast<u64>(AppletIdToProgramId(applet_id));
+    const auto program_id = static_cast<u64>(
+        ResolveGuestAppletProgramId(AppletIdToProgramId(applet_id), system.GetContentProvider()));
     if (program_id == 0) {
         // Unknown applet
         return {};

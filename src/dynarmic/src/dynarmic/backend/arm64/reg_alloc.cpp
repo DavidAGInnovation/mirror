@@ -407,7 +407,7 @@ int RegAlloc::RealizeReadWriteImpl(const IR::Value& read_value, const IR::Inst* 
         LoadCopyInto(read_value, oaknut::QReg{write_loc});
         return write_loc;
     } else if constexpr (kind == HostLoc::Kind::Flags) {
-        ASSERT(false && "Incorrect function for ReadWrite of flags");
+        UNREACHABLE_MSG("Incorrect function for ReadWrite of flags");
     } else {
         UNREACHABLE();
     }

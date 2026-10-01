@@ -73,8 +73,8 @@ static void SanitizeJPEGImageSize(std::vector<u8>& image) {
 
 class IManagerForSystemService final : public ServiceFramework<IManagerForSystemService> {
 public:
-    explicit IManagerForSystemService(Core::System& system_, Common::UUID uuid)
-        : ServiceFramework{system_, "IManagerForSystemService"}, account_id{uuid} {
+    explicit IManagerForSystemService(Core::System& system_, Common::UUID)
+        : ServiceFramework{system_, "IManagerForSystemService"} {
         // clang-format off
         static const FunctionInfo functions[] = {
             {0, D<&IManagerForSystemService::CheckAvailability>, "CheckAvailability"},
@@ -90,13 +90,13 @@ public:
             {113, nullptr, "GetServiceEntryRequirementCacheForOnlinePlay"}, // 6.1.0+
             {120, nullptr, "GetNintendoAccountId"},
             {121, nullptr, "CalculateNintendoAccountAuthenticationFingerprint"}, // 9.0.0+
-            {130, nullptr, "GetNintendoAccountUserResourceCache"},
+            {130, D<&IManagerForSystemService::GetNintendoAccountUserResourceCache>, "GetNintendoAccountUserResourceCache"},
             {131, nullptr, "RefreshNintendoAccountUserResourceCacheAsync"},
             {132, nullptr, "RefreshNintendoAccountUserResourceCacheAsyncIfSecondsElapsed"},
             {133, nullptr, "GetNintendoAccountVerificationUrlCache"}, // 9.0.0+
             {134, nullptr, "RefreshNintendoAccountVerificationUrlCache"}, // 9.0.0+
             {135, nullptr, "RefreshNintendoAccountVerificationUrlCacheAsyncIfSecondsElapsed"}, // 9.0.0+
-            {136, nullptr, "GetNintendoAccountUserResourceCache"}, // 19.0.0+
+            {136, D<&IManagerForSystemService::GetNintendoAccountUserResourceCache>, "GetNintendoAccountUserResourceCache"}, // 19.0.0+
             {140, nullptr, "GetNetworkServiceLicenseCache"}, // 5.0.0+
             {141, nullptr, "RefreshNetworkServiceLicenseCacheAsync"}, // 5.0.0+
             {142, nullptr, "RefreshNetworkServiceLicenseCacheAsyncIfSecondsElapsed"}, // 5.0.0+
@@ -114,24 +114,28 @@ public:
 
 private:
     Result CheckAvailability() {
-        LOG_WARNING(Service_ACC, "(STUBBED) called");
-        R_SUCCEED();
+        // Emulator profiles have no Nintendo network-account registration or credentials.
+        LOG_DEBUG(Service_ACC, "Nintendo network account is unavailable");
+        R_RETURN(ResultNetworkServiceAccountRegistrationRequired);
     }
 
     Result GetAccountId(Out<u64> out_account_id) {
-        LOG_WARNING(Service_ACC, "(STUBBED) called");
-        *out_account_id = account_id.Hash();
-        R_SUCCEED();
+        LOG_DEBUG(Service_ACC, "Nintendo network account is unavailable");
+        *out_account_id = 0;
+        R_RETURN(ResultNetworkServiceAccountRegistrationRequired);
     }
 
     Result LoadIdTokenCacheDeprecated() {
-        LOG_WARNING(Service_ACC, "(STUBBED) called");
-        R_SUCCEED();
+        R_RETURN(ResultNetworkServiceAccountRegistrationRequired);
     }
 
     Result LoadIdTokenCache() {
-        LOG_WARNING(Service_ACC, "(STUBBED) called");
-        R_SUCCEED();
+        R_RETURN(ResultNetworkServiceAccountRegistrationRequired);
+    }
+
+    Result GetNintendoAccountUserResourceCache() {
+        LOG_DEBUG(Service_ACC, "No Nintendo network-account resource cache");
+        R_RETURN(ResultNetworkServiceAccountRegistrationRequired);
     }
 
     Result GetNetworkServiceLicenseCacheEx(Out<u32> out_license, Out<s64> out_expiration) {
@@ -143,7 +147,6 @@ private:
         R_SUCCEED();
     }
 
-    Common::UUID account_id;
 };
 
 // 3.0.0+

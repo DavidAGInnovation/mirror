@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+
 #include "common/alignment.h"
 #include "core/core.h"
 #include "core/file_sys/content_archive.h"
@@ -23,10 +25,12 @@ CertStore::CertStore(Core::System& system) {
     const auto nca =
         fsc.GetSystemNANDContents()->GetEntry(CertStoreDataId, FileSys::ContentRecordType::Data);
     if (!nca) {
+        LOG_WARNING(Service_SSL, "Firmware certificate-store NCA is unavailable");
         return;
     }
     const auto romfs = nca->GetRomFS();
     if (!romfs) {
+        LOG_WARNING(Service_SSL, "Firmware certificate-store RomFS is unavailable");
         return;
     }
     const auto extracted = FileSys::ExtractRomFS(romfs);
@@ -39,17 +43,30 @@ CertStore::CertStore(Core::System& system) {
         LOG_ERROR(Service_SSL, "Failed to find trusted certificates in CertStore");
         return;
     }
+    Load(cert_store_file);
+}
+
+CertStore::CertStore(const FileSys::VirtualFile& file) {
+    Load(file);
+}
+
+void CertStore::Load(const FileSys::VirtualFile& cert_store_file) {
+    if (!cert_store_file) {
+        return;
+    }
 
     // Read and verify the header.
-    CertStoreHeader header;
-    cert_store_file->ReadObject(std::addressof(header));
+    CertStoreHeader header{};
+    if (cert_store_file->ReadObject(std::addressof(header)) != sizeof(header)) {
+        return;
+    }
 
     if (header.magic != Common::MakeMagic('s', 's', 'l', 'T')) {
         LOG_ERROR(Service_SSL, "Invalid certificate store magic");
         return;
     }
 
-    // Ensure the file can contains the number of entries it says it does.
+    // Ensure the file can contain the number of entries it says it does.
     const u64 expected_size = sizeof(header) + sizeof(CertStoreEntry) * header.num_entries;
     const u64 actual_size = cert_store_file->GetSize();
     if (actual_size < expected_size) {
@@ -64,21 +81,39 @@ CertStore::CertStore(Core::System& system) {
 
     // Insert into memory store.
     for (const auto& entry : entries) {
+        const u64 offset = u64{entry.der_offset} + sizeof(header);
+        if (offset > actual_size || entry.der_size > actual_size - offset) {
+            LOG_ERROR(Service_SSL, "Certificate data exceeds the store bounds");
+            m_certs.clear();
+            return;
+        }
         m_certs.emplace(entry.certificate_id,
                         Certificate{
                             .status = entry.certificate_status,
-                            .der_data = cert_store_file->ReadBytes(
-                                entry.der_size, entry.der_offset + sizeof(header)),
+                            .der_data = cert_store_file->ReadBytes(entry.der_size, offset),
                         });
     }
+    LOG_INFO(Service_SSL, "Loaded {} firmware certificates", m_certs.size());
 }
 
 CertStore::~CertStore() = default;
 
 template <typename F>
 void CertStore::ForEachCertificate(std::span<const CaCertificateId> certificate_ids, F&& f) {
-    if (certificate_ids.size() == 1 && certificate_ids.front() == CaCertificateId::All) {
+    const auto sentinel = std::ranges::find_if(certificate_ids, [](auto id) {
+        return id == CaCertificateId::All || id == CaCertificateId::AllExcludingSystem;
+    });
+    const bool include_all = sentinel != certificate_ids.end();
+    const bool public_only = include_all && *sentinel == CaCertificateId::AllExcludingSystem;
+    if (include_all) {
         for (const auto& entry : m_certs) {
+            // Firmware uses version 5 to expose 0x7000 certificates and, for
+            // selector -1 only, 0x8000 system certificates. Preserve statuses.
+            const u32 group = static_cast<u32>(entry.first) & 0xfffff000;
+            if ((group == 0x7000 && interface_version < 5) ||
+                (group == 0x8000 && (interface_version < 5 || public_only))) {
+                continue;
+            }
             f(entry);
         }
     } else {
@@ -119,7 +154,8 @@ Result CertStore::GetCertificates(u32* out_num_entries, std::span<u8> out_data,
 
         cert_infos.push_back(cert_info);
         der_datas.insert(der_datas.end(), cur_der_data.begin(), cur_der_data.end());
-        cur_der_offset += static_cast<u32>(cur_der_data.size());
+        der_datas.resize(Common::AlignUp(der_datas.size(), 4));
+        cur_der_offset = der_data_offset + static_cast<u32>(der_datas.size());
     });
 
     // Append terminator entry.

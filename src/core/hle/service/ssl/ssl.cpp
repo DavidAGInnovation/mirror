@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <map>
 #include "common/string_util.h"
 
 #include "core/core.h"
@@ -70,6 +71,8 @@ struct SslVersion {
 
 struct SslContextSharedData {
     u32 connection_count = 0;
+    u64 next_pki_id = 1;
+    std::map<u64, ServerPki> certificates;
 };
 
 class ISslConnection final : public ServiceFramework<ISslConnection> {
@@ -131,16 +134,13 @@ public:
         shared_data->connection_count--;
         if (fd_to_close.has_value()) {
             const s32 fd = *fd_to_close;
-            if (!do_not_close_socket) {
-                LOG_ERROR(Service_SSL,
-                          "do_not_close_socket was changed after setting socket; is this right?");
-            } else {
-                auto bsd = system.ServiceManager().GetService<Service::Sockets::BSD_USA>("bsd:u");
-                if (bsd) {
-                    auto err = bsd->CloseImpl(fd);
-                    if (err != Service::Sockets::Errno::SUCCESS) {
-                        LOG_ERROR(Service_SSL, "Failed to close duplicated socket: {}", err);
-                    }
+            // Ownership is determined when the descriptor is attached. A later
+            // option change cannot transfer or leak an already-owned duplicate.
+            auto bsd = system.ServiceManager().GetService<Service::Sockets::BSD_USA>("bsd:u");
+            if (bsd) {
+                const auto err = bsd->CloseImpl(fd);
+                if (err != Service::Sockets::Errno::SUCCESS) {
+                    LOG_ERROR(Service_SSL, "Failed to close duplicated socket: {}", err);
                 }
             }
         }
@@ -149,6 +149,17 @@ public:
 private:
     Result DoHandshakeImpl() {
         ASSERT_OR_EXECUTE(!did_handshake && socket, { return ResultNoSocket; });
+        if (!trust_configured) {
+            std::vector<ServerPki> certs;
+            for (const auto& [id, cert] : shared_data->certificates) {
+                certs.push_back(cert);
+            }
+            const auto result = backend->SetServerPki(certs);
+            if (result.IsError()) {
+                return result;
+            }
+            trust_configured = true;
+        }
         Result res = backend->DoHandshake();
         did_handshake = res.IsSuccess();
         return res;
@@ -445,6 +456,7 @@ private:
     bool skip_default_verify = false;
     bool enable_alpn = false;
     bool did_handshake = false;
+    bool trust_configured = false;
 };
 
 class ISslContext final : public ServiceFramework<ISslContext> {
@@ -459,7 +471,7 @@ public:
             {3, &ISslContext::GetConnectionCount, "GetConnectionCount"},
             {4, &ISslContext::ImportServerPki, "ImportServerPki"},
             {5, &ISslContext::ImportClientPki, "ImportClientPki"},
-            {6, nullptr, "RemoveServerPki"},
+            {6, &ISslContext::RemoveServerPki, "RemoveServerPki"},
             {7, nullptr, "RemoveClientPki"},
             {8, D<&ISslContext::RegisterInternalPki>, "RegisterInternalPki"},
             {9, nullptr, "AddPolicyOid"},
@@ -526,16 +538,34 @@ private:
 
     void ImportServerPki(HLERequestContext& ctx) {
         IPC::RequestParser rp{ctx};
-        const auto certificate_format = rp.PopEnum<CertificateFormat>();
-        [[maybe_unused]] const auto pkcs_12_certificates = ctx.ReadBuffer(0);
-
-        constexpr u64 server_id = 0;
-
-        LOG_WARNING(Service_SSL, "(STUBBED) called, certificate_format={}", certificate_format);
-
+        ServerPki cert{rp.Pop<u32>(), {}};
+        const auto input = ctx.ReadBuffer(0);
+        size_t total = input.size();
+        for (const auto& [id, existing] : shared_data->certificates) {
+            total += existing.data.size();
+        }
+        Result result = ResultInternalError;
+        u64 id = 0;
+        if (!input.empty() && input.size() <= 65536 && total <= 524288 &&
+            shared_data->certificates.size() < 128) {
+            cert.data.assign(input.begin(), input.end());
+            if (ValidateServerPki(cert)) {
+                id = shared_data->next_pki_id++;
+                shared_data->certificates.emplace(id, std::move(cert));
+                result = ResultSuccess;
+            }
+        }
         IPC::ResponseBuilder rb{ctx, 4};
-        rb.Push(ResultSuccess);
-        rb.Push(server_id);
+        rb.Push(result);
+        rb.Push(id);
+    }
+
+    void RemoveServerPki(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        const auto id = rp.Pop<u64>();
+        const auto removed = shared_data->certificates.erase(id);
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(removed ? ResultSuccess : ResultInternalError);
     }
 
     void ImportClientPki(HLERequestContext& ctx) {
@@ -609,6 +639,7 @@ private:
         u32 ssl_version = rp.Pop<u32>();
 
         LOG_DEBUG(Service_SSL, "called, ssl_version={}", ssl_version);
+        cert_store.SetInterfaceVersion(ssl_version);
 
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
@@ -633,7 +664,8 @@ private:
 
 class ISslServiceForSystem final : public ServiceFramework<ISslServiceForSystem> {
     public:
-        explicit ISslServiceForSystem(Core::System& system_) : ServiceFramework{system_, "ssl:s"} {
+        explicit ISslServiceForSystem(Core::System& system_)
+            : ServiceFramework{system_, "ssl:s"}, cert_store{system_} {
             // clang-format off
             static const FunctionInfo functions[] = {
                 {0, D<&ISslServiceForSystem::CreateContext>, "CreateContext"},
@@ -672,20 +704,23 @@ class ISslServiceForSystem final : public ServiceFramework<ISslServiceForSystem>
             return ResultSuccess;
         };
 
-        Result GetCertificates() {
-            LOG_DEBUG(Service_SSL, "(STUBBED) called.");
-
-            // TODO (jarrodnorwell)
-
-            return ResultSuccess;
+        Result GetCertificates(Out<u32> out_num_entries,
+                               OutBuffer<BufferAttr_HipcMapAlias> out_buffer,
+                               InArray<CaCertificateId, BufferAttr_HipcMapAlias> certificate_ids) {
+            LOG_INFO(Service_SSL, "Reading firmware trust store");
+            R_RETURN(cert_store.GetCertificates(out_num_entries, out_buffer, certificate_ids));
         };
 
-        Result GetCertificateBufSize() {
-            LOG_DEBUG(Service_SSL, "(STUBBED) called.");
-
-            // TODO (jarrodnorwell)
-
-            return ResultSuccess;
+        Result GetCertificateBufSize(
+            Out<u32> out_size, InArray<CaCertificateId, BufferAttr_HipcMapAlias> certificate_ids) {
+            u32 num_entries{};
+            LOG_INFO(Service_SSL, "Certificate request: {} IDs, first ID {}",
+                     certificate_ids.size(),
+                     certificate_ids.empty() ? 0 : static_cast<s32>(certificate_ids.front()));
+            R_TRY(cert_store.GetCertificateBufSize(out_size, &num_entries, certificate_ids));
+            LOG_INFO(Service_SSL, "Firmware trust store: {} certificates, {} bytes", num_entries,
+                     *out_size);
+            R_SUCCEED();
         };
 
         Result DebugIoctl() {
@@ -696,12 +731,10 @@ class ISslServiceForSystem final : public ServiceFramework<ISslServiceForSystem>
             return ResultSuccess;
         };
 
-        Result SetInterfaceVersion() {
-            LOG_DEBUG(Service_SSL, "(STUBBED) called.");
-
-            // TODO (jarrodnorwell)
-
-            return ResultSuccess;
+        Result SetInterfaceVersion(u32 version) {
+            LOG_DEBUG(Service_SSL, "called, version={}", version);
+            cert_store.SetInterfaceVersion(version);
+            R_SUCCEED();
         };
 
         Result FlushSessionCache() {
@@ -767,6 +800,9 @@ class ISslServiceForSystem final : public ServiceFramework<ISslServiceForSystem>
 
             return ResultSuccess;
         };
+
+    private:
+        CertStore cert_store;
     };
 
 void LoopProcess(Core::System& system) {

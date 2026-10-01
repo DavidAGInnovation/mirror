@@ -118,6 +118,8 @@ enum class AppletProgramId : u64 {
     WebAuth = 0x0100000000001011ull,
     Starter = 0x0100000000001012ull,
     MyPage = 0x0100000000001013ull,
+    SystemWeb = 0x0100000000001042ull,
+    OpenWeb = 0x0100000000001043ull,
     MaxProgramId = 0x0100000000001FFFull,
 };
 

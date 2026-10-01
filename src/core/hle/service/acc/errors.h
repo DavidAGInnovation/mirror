@@ -15,5 +15,6 @@ constexpr Result ResultNullptr{ErrorModule::Account, 30};
 constexpr Result ResultInvalidArrayLength{ErrorModule::Account, 32};
 constexpr Result ResultApplicationInfoAlreadyInitialized{ErrorModule::Account, 41};
 constexpr Result ResultAccountUpdateFailed{ErrorModule::Account, 100};
+constexpr Result ResultNetworkServiceAccountRegistrationRequired{ErrorModule::Account, 200};
 
 } // namespace Service::Account

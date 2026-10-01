@@ -18,7 +18,13 @@ void ExitProcess(Core::System& system) {
     ASSERT_MSG(current_process->GetState() == KProcess::State::Running,
                "Process has already exited");
 
-    system.Exit();
+    if (current_process == system.Kernel().ApplicationProcess()) {
+        system.Exit();
+    } else {
+        // A library applet owns a separate process. Its normal exit must not
+        // shut down the application which launched it.
+        current_process->Exit(system.Kernel());
+    }
 }
 
 /// Gets the ID of the specified process or a specified thread's owning process.

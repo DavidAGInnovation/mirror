@@ -5,7 +5,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
-#include <stdexcept>
+#include <cerrno>
+#include <cstdlib>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -92,12 +94,19 @@ int ParamPackage::Get(const std::string& key, int default_value) const {
         return default_value;
     }
 
-    try {
-        return std::stoi(pair->second);
-    } catch (const std::logic_error&) {
+    const char* begin = pair->second.c_str();
+    char* end = nullptr;
+    const int previous_errno = errno;
+    errno = 0;
+    const long value = std::strtol(begin, &end, 10);
+    const int conversion_errno = errno;
+    errno = previous_errno;
+    if (end == begin || conversion_errno == ERANGE || value < std::numeric_limits<int>::min() ||
+        value > std::numeric_limits<int>::max()) {
         LOG_ERROR(Common, "failed to convert {} to int", pair->second);
         return default_value;
     }
+    return static_cast<int>(value);
 }
 
 float ParamPackage::Get(const std::string& key, float default_value) const {
@@ -107,12 +116,18 @@ float ParamPackage::Get(const std::string& key, float default_value) const {
         return default_value;
     }
 
-    try {
-        return std::stof(pair->second);
-    } catch (const std::logic_error&) {
+    const char* begin = pair->second.c_str();
+    char* end = nullptr;
+    const int previous_errno = errno;
+    errno = 0;
+    const float value = std::strtof(begin, &end);
+    const int conversion_errno = errno;
+    errno = previous_errno;
+    if (end == begin || conversion_errno == ERANGE) {
         LOG_ERROR(Common, "failed to convert {} to float", pair->second);
         return default_value;
     }
+    return value;
 }
 
 void ParamPackage::Set(const std::string& key, std::string value) {

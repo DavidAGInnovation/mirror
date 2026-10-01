@@ -170,7 +170,7 @@ else()
             $<$<COMPILE_LANGUAGE:C,CXX>:-Wshadow>
             $<$<COMPILE_LANGUAGE:C,CXX>:-Wunused>
             # Some compilers could particularly misbehave :)
-            $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-error-all>)
+            $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-error>)
     endif()
     add_compile_options(
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-attributes>

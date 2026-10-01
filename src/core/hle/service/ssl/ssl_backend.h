@@ -32,11 +32,21 @@ constexpr Result ResultInternalError{ErrorModule::SSLSrv, 999}; // made up
 // polling for read (with a timeout).
 constexpr Result ResultWouldBlock{ErrorModule::SSLSrv, 204};
 
+struct ServerPki {
+    u32 format;
+    std::vector<u8> data;
+};
+
+bool ValidateServerPki(const ServerPki& certificate);
+
 class SSLConnectionBackend {
 public:
     virtual ~SSLConnectionBackend() {}
     virtual void SetSocket(std::shared_ptr<Network::SocketBase> socket) = 0;
     virtual void SetVerifyOption(u32 option) = 0;
+    virtual Result SetServerPki(std::span<const ServerPki> certificates) {
+        return certificates.empty() ? ResultSuccess : ResultInternalError;
+    }
     virtual Result DoHandshake() = 0;
     virtual Result Read(size_t* out_size, std::span<u8> data) = 0;
     virtual Result Peek(size_t* out_size, std::span<u8> data) = 0;

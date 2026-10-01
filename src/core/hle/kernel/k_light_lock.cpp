@@ -78,7 +78,9 @@ bool KLightLock::LockSlowPath(uintptr_t _owner, uintptr_t _cur_thread) {
         }
     }
 
-    return true;
+    // Cancellation removes this thread from the owner's waiter list without
+    // transferring ownership. Retry the lock instead of returning as its owner.
+    return cur_thread->GetWaitResult() == ResultSuccess;
 }
 
 void KLightLock::UnlockSlowPath(uintptr_t _cur_thread) {

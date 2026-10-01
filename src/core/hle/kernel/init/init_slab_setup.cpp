@@ -110,7 +110,10 @@ static_assert(KernelPageBufferAdditionalSize ==
 static KPhysicalAddress TranslateSlabAddrToPhysical(KMemoryLayout& memory_layout,
                                                     KVirtualAddress slab_addr) {
     slab_addr -= memory_layout.GetSlabRegion().GetAddress();
-    return GetInteger(slab_addr) + Core::DramMemoryMap::SlabHeapBase;
+    const auto* physical_slab = memory_layout.GetPhysicalMemoryRegionTree().FindFirstDerived(
+        KMemoryRegionType_DramKernelSlab);
+    ASSERT(physical_slab != nullptr);
+    return GetInteger(slab_addr) + physical_slab->GetAddress();
 }
 
 template <typename T>
