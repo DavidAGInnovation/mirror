@@ -384,12 +384,13 @@ public:
 
 private:
     void Submit(HLERequestContext& ctx) {
-        LOG_DEBUG(Service_NIFM, "(STUBBED) called");
-
-        if (state == RequestState::NotSubmitted) {
-            UpdateState(RequestState::OnHold);
-        }
-
+        // Host networking is already established; there is no guest connection
+        // task for GetResult to advance. Publish completion at submission so
+        // clients waiting on the state event can proceed without polling GetResult.
+        const bool available =
+            Network::GetHostIPv4Address().has_value() && !Settings::values.airplane_mode.GetValue();
+        UpdateState(available ? RequestState::Accepted : RequestState::Invalid);
+        LOG_DEBUG(Service_NIFM, "Host request submitted, state={}", static_cast<u32>(state));
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
     }
@@ -427,27 +428,13 @@ private:
     }
 
     void GetResult(HLERequestContext& ctx) {
-        LOG_DEBUG(Service_NIFM, "(STUBBED) called");
-
-        const auto result = [this] {
-            const auto has_connection = Network::GetHostIPv4Address().has_value() &&
-                                        !Settings::values.airplane_mode.GetValue();
-            switch (state) {
-            case RequestState::NotSubmitted:
-                return has_connection ? ResultSuccess : ResultNetworkCommunicationDisabled;
-            case RequestState::OnHold:
-                if (has_connection) {
-                    UpdateState(RequestState::Accepted);
-                } else {
-                    UpdateState(RequestState::Invalid);
-                }
-                return ResultPendingConnection;
-            case RequestState::Accepted:
-            default:
-                return ResultSuccess;
-            }
-        }();
-
+        const bool available =
+            Network::GetHostIPv4Address().has_value() && !Settings::values.airplane_mode.GetValue();
+        const Result result = state == RequestState::Accepted && available
+                                  ? ResultSuccess
+                                  : ResultNetworkCommunicationDisabled;
+        LOG_DEBUG(Service_NIFM, "Host request state={}, result={:X}", static_cast<u32>(state),
+                  result.raw);
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(result);
     }
@@ -489,9 +476,12 @@ private:
     }
 
     void UpdateState(RequestState new_state) {
-        LOG_DEBUG(Service_NIFM, "(STUBBED) called");
         state = new_state;
         event1->Signal(system.Kernel());
+        // The SDK exposes a second event for request completion/availability.
+        // The firmware browser waits on it before refreshing its cached state;
+        // signaling only the state-change event leaves its network worker offline.
+        event2->Signal(system.Kernel());
     }
 
     KernelHelpers::ServiceContext service_context;
