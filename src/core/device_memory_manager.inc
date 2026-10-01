@@ -547,7 +547,7 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedCountNoLock(DAddr addr, size_
     const size_t page_end = Common::DivCeil(addr + size, Memory::YUZU_PAGESIZE);
     size_t page = addr >> Memory::YUZU_PAGEBITS;
     auto [asid, base_vaddress] = ExtractCPUBacking(page);
-    auto* memory_device_inter = registered_processes[asid.id];
+    auto* memory_device_inter = base_vaddress == 0 ? nullptr : registered_processes[asid.id];
     const auto release_pending = [&] {
         if (uncache_bytes > 0) {
             if (memory_device_inter != nullptr) {
@@ -575,9 +575,10 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedCountNoLock(DAddr addr, size_
             continue;
         }
 
-        if (asid.id != asid_2.id) [[unlikely]] {
+        if (memory_device_inter == nullptr || asid.id != asid_2.id) [[unlikely]] {
             release_pending();
             memory_device_inter = registered_processes[asid_2.id];
+            asid = asid_2;
         }
 
         if (vpage != old_vpage + 1) [[unlikely]] {
