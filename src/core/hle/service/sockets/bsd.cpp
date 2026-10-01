@@ -201,13 +201,33 @@ void BSD_USA::SocketExempt(HLERequestContext& ctx) {
 }
 
 void BSD_USA::Select(HLERequestContext& ctx) {
-    LOG_DEBUG(Service, "(STUBBED) called");
-
+    struct Input {
+        s32 nfds;
+        u32 padding;
+        s64 seconds;
+        s64 microseconds;
+        u8 infinite;
+        std::array<u8, 7> reserved;
+    };
+    static_assert(sizeof(Input) == 32);
+    IPC::RequestParser rp{ctx};
+    const auto input = rp.PopRaw<Input>();
+    const std::array<std::span<const u8>, 3> inputs{ctx.ReadBuffer(0), ctx.ReadBuffer(1),
+                                                    ctx.ReadBuffer(2)};
+    std::array<std::vector<u8>, 3> outputs{std::vector<u8>(ctx.GetWriteBufferSize(0)),
+                                           std::vector<u8>(ctx.GetWriteBufferSize(1)),
+                                           std::vector<u8>(ctx.GetWriteBufferSize(2))};
+    const auto [ret, error] = SelectImpl(input.nfds, inputs, outputs, input.seconds,
+                                         input.microseconds, input.infinite != 0);
+    for (size_t i = 0; i < outputs.size(); ++i) {
+        if (!outputs[i].empty()) {
+            ctx.WriteBuffer(outputs[i], i);
+        }
+    }
     IPC::ResponseBuilder rb{ctx, 4};
-
     rb.Push(ResultSuccess);
-    rb.Push<u32>(0); // ret
-    rb.Push<u32>(0); // bsd errno
+    rb.Push<s32>(ret);
+    rb.PushEnum(error);
 }
 
 void BSD_USA::Poll(HLERequestContext& ctx) {
@@ -522,6 +542,13 @@ void BSD_USA::ExecuteWork(HLERequestContext& ctx, Work work) {
 }
 
 std::pair<s32, Errno> BSD_USA::SocketImpl(Domain domain, Type type, Protocol protocol) {
+    constexpr u32 close_on_exec = 0x10000000;
+    constexpr u32 non_blocking = 0x20000000;
+    const bool non_block = (static_cast<u32>(type) & non_blocking) != 0;
+    // Guest flags differ from host flags. Guest descriptors never survive a
+    // guest exec, so CLOEXEC needs no additional host operation.
+    type = static_cast<Type>(static_cast<u32>(type) & ~(close_on_exec | non_blocking));
+
     // user bsd:u has restrictions on SOCK_SEQPACKET and SOCK_RAW
     if (is_user && (type == Type::SEQPACKET || type == Type::RAW)) {
         if (type == Type::RAW && domain == Domain::INET && protocol == Protocol::ICMP) {
@@ -530,10 +557,6 @@ std::pair<s32, Errno> BSD_USA::SocketImpl(Domain domain, Type type, Protocol pro
             return {-1, Errno::INVAL};
         }
     }
-
-    [[maybe_unused]] const bool unk_flag = (static_cast<u32>(type) & 0x20000000) != 0;
-    UNIMPLEMENTED_IF_MSG(unk_flag, "Unknown flag in type");
-    type = static_cast<Type>(static_cast<u32>(type) & ~0x20000000);
 
     const s32 fd = FindFreeFileDescriptorHandle();
     if (fd < 0) {
@@ -554,15 +577,96 @@ std::pair<s32, Errno> BSD_USA::SocketImpl(Domain domain, Type type, Protocol pro
         descriptor.socket = std::make_shared<Network::Socket>();
     }
 
-    descriptor.socket->Initialize(Translate(domain), Translate(type), Translate(protocol));
+    Errno socket_error = Translate(
+        descriptor.socket->Initialize(Translate(domain), Translate(type), Translate(protocol)));
+    if (socket_error == Errno::SUCCESS && non_block) {
+        socket_error = Translate(descriptor.socket->SetNonBlock(true));
+        descriptor.flags = Network::FLAG_O_NONBLOCK;
+    }
+    if (socket_error != Errno::SUCCESS) {
+        file_descriptors[fd].reset();
+        return {-1, socket_error};
+    }
     descriptor.is_connection_based = IsConnectionBased(type);
 
     if (Settings::values.airplane_mode.GetValue() && descriptor.is_connection_based) {
         LOG_ERROR(Service, "Airplane mode is enabled, cannot create socket");
+        file_descriptors[fd].reset();
         return {-1, Errno::NOTCONN};
     }
 
     return {fd, Errno::SUCCESS};
+}
+
+std::pair<s32, Errno> BSD_USA::SelectImpl(s32 nfds,
+                                          const std::array<std::span<const u8>, 3>& inputs,
+                                          std::array<std::vector<u8>, 3>& outputs, s64 seconds,
+                                          s64 microseconds, bool infinite) {
+    if (nfds < 0 || nfds > static_cast<s32>(MAX_FD) ||
+        (!infinite && (seconds < 0 || microseconds < 0 || microseconds >= 1'000'000))) {
+        return {-1, Errno::INVAL};
+    }
+    const size_t bytes = (static_cast<size_t>(nfds) + 7) / 8;
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        if (!inputs[i].empty() && (inputs[i].size() < bytes || outputs[i].size() < bytes)) {
+            return {-1, Errno::INVAL};
+        }
+        std::fill(outputs[i].begin(), outputs[i].end(), 0);
+    }
+    const auto requested = [&](size_t set, s32 fd) {
+        return !inputs[set].empty() && (inputs[set][fd / 8] & (1U << (fd % 8))) != 0;
+    };
+    std::vector<Network::PollFD> polls;
+    std::vector<s32> handles;
+    for (s32 fd = 0; fd < nfds; ++fd) {
+        Network::PollEvents events{};
+        if (requested(0, fd)) {
+            events |= Network::PollEvents::In;
+        }
+        if (requested(1, fd)) {
+            events |= Network::PollEvents::Out;
+        }
+        if (requested(2, fd)) {
+            events |= Network::PollEvents::Pri;
+        }
+        if (False(events)) {
+            continue;
+        }
+        if (!IsFileDescriptorValid(fd)) {
+            return {-1, Errno::BADF};
+        }
+        polls.push_back({file_descriptors[fd]->socket.get(), events, {}});
+        handles.push_back(fd);
+    }
+    // Round up fractional milliseconds so select never returns before its timeout.
+    const s32 timeout = infinite ? -1
+                                 : static_cast<s32>(std::min<s64>(
+                                       INT_MAX, std::min<s64>(seconds, INT_MAX / 1000) * 1000 +
+                                                    (microseconds + 999) / 1000));
+    const auto error = Network::Poll(polls, timeout).second;
+    if (error != Network::Errno::SUCCESS) {
+        return {-1, Translate(error)};
+    }
+    s32 count{};
+    for (size_t i = 0; i < polls.size(); ++i) {
+        const auto events = polls[i].revents;
+        if (True(events & Network::PollEvents::Nval)) {
+            return {-1, Errno::BADF};
+        }
+        const std::array<bool, 3> available{
+            True(events &
+                 (Network::PollEvents::In | Network::PollEvents::Hup | Network::PollEvents::Err)),
+            True(events & (Network::PollEvents::Out | Network::PollEvents::Err)),
+            True(events & Network::PollEvents::Pri)};
+        for (size_t set = 0; set < outputs.size(); ++set) {
+            const s32 fd = handles[i];
+            if (requested(set, fd) && available[set]) {
+                outputs[set][fd / 8] |= 1U << (fd % 8);
+                ++count;
+            }
+        }
+    }
+    return {count, Errno::SUCCESS};
 }
 
 std::pair<s32, Errno> BSD_USA::PollImpl(std::vector<u8>& write_buffer, std::span<const u8> read_buffer,

@@ -164,6 +164,7 @@ struct SockAddrIn {
 
 constexpr u32 FLAG_MSG_PEEK = 0x2;
 constexpr u32 FLAG_MSG_DONTWAIT = 0x80;
+constexpr u32 FLAG_MSG_NOSIGNAL = 0x20000;
 constexpr u32 FLAG_O_NONBLOCK = 0x800;
 
 /// Cross-platform addrinfo structure

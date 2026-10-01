@@ -988,7 +988,11 @@ std::pair<s32, Errno> Socket::RecvFrom(int flags, std::span<u8> message, SockAdd
 
 std::pair<s32, Errno> Socket::Send(std::span<const u8> message, int flags) {
     ASSERT(message.size() < static_cast<size_t>((std::numeric_limits<int>::max)()));
-    ASSERT(flags == 0);
+    // Guest MSG_NOSIGNAL is valid; the host path already suppresses SIGPIPE.
+    // Guest bit values are not native socket flags. Reject unsupported bits.
+    if ((static_cast<u32>(flags) & ~FLAG_MSG_NOSIGNAL) != 0) {
+        return {-1, Errno::INVAL};
+    }
 
     int native_flags = 0;
 #ifdef __unix__
