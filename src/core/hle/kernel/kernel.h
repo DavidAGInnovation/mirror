@@ -20,6 +20,7 @@
 #include "core/hle/kernel/k_slab_heap.h"
 #include "core/hle/kernel/k_typed_address.h"
 #include "core/hle/kernel/svc_common.h"
+#include "core/hle/result.h"
 
 namespace Core {
 class ExclusiveMonitor;
@@ -227,6 +228,10 @@ public:
 
     /// Gets the virtual memory manager for the kernel.
     const KMemoryManager& MemoryManager() const;
+
+    /// Leases the pre-reserved secure applet region to one system resource.
+    Result AllocateSecureAppletMemory(KVirtualAddress* out, size_t size);
+    void FreeSecureAppletMemory(KVirtualAddress address, size_t size);
 
     /// Gets the application resource manager.
     KSystemResource& GetAppSystemResource();

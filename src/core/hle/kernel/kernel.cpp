@@ -7,12 +7,13 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <thread>
+#include <utility>
 #include "common/container/unordered_map.h"
 #include "common/container/unordered_set.h"
-#include <utility>
 
 #include "common/assert.h"
 #include "common/logging.h"
@@ -24,6 +25,7 @@
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/cpu_manager.h"
+#include "core/device_memory.h"
 #include "core/hardware_properties.h"
 #include "core/hle/kernel/init/init_slab_setup.h"
 #include "core/hle/kernel/k_client_port.h"
@@ -44,6 +46,7 @@
 #include "core/hle/kernel/k_worker_task_manager.h"
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/physical_core.h"
+#include "core/hle/kernel/svc_results.h"
 #include "core/hle/result.h"
 #include "core/hle/service/server_manager.h"
 #include "core/hle/service/sm/sm.h"
@@ -81,6 +84,13 @@ struct KernelCore::Impl {
     static inline thread_local ThreadLocalData tls_data = {};
 
     explicit Impl(Core::System& system_, KernelCore& kernel_) : system{system_} {
+        // A new System on this host thread must not reuse a dummy thread whose
+        // kernel reference belongs to the previous System.
+        tls_data.current_thread = nullptr;
+        tls_data.thread = nullptr;
+        tls_data.raw_thread.reset();
+        tls_data.host_thread_id = UINT8_MAX;
+        tls_data.is_phantom_mode_for_singlecore = false;
         tls_data.lock = true;
     }
 
@@ -89,6 +99,8 @@ struct KernelCore::Impl {
     }
 
     void Initialize(KernelCore& kernel) {
+        secure_applet_memory_used = false;
+        secure_applet_memory_lease_size = 0;
         hardware_timer.emplace(kernel);
         hardware_timer->Initialize();
 
@@ -832,6 +844,10 @@ struct KernelCore::Impl {
     // Memory layout
     std::optional<KMemoryLayout> memory_layout;
 
+    std::mutex secure_applet_memory_lock;
+    bool secure_applet_memory_used{};
+    size_t secure_applet_memory_lease_size{};
+
     std::array<KThread*, Core::Hardware::NUM_CPU_CORES> shutdown_threads{};
     std::array<std::optional<Kernel::KScheduler>, Core::Hardware::NUM_CPU_CORES> schedulers{};
 
@@ -1292,6 +1308,45 @@ const KWorkerTaskManager& KernelCore::WorkerTaskManager() const {
 
 const KMemoryLayout& KernelCore::MemoryLayout() const {
     return *impl->memory_layout;
+}
+
+Result KernelCore::AllocateSecureAppletMemory(KVirtualAddress* out, size_t size) {
+    R_UNLESS(Common::IsAligned(size, PageSize), ResultInvalidSize);
+    R_UNLESS(size <= KSystemControl::SecureAppletMemorySize, ResultOutOfMemory);
+
+    std::scoped_lock lk{impl->secure_applet_memory_lock};
+    R_UNLESS(!impl->secure_applet_memory_used, ResultOutOfMemory);
+
+    const auto* region = MemoryLayout().GetPhysicalMemoryRegionTree().FindFirstDerived(
+        KMemoryRegionType_DramKernelSecureAppletMemory);
+    ASSERT_OR_EXECUTE(region != nullptr, R_RETURN(ResultInvalidState););
+    ASSERT_OR_EXECUTE(region->GetSize() == KSystemControl::SecureAppletMemorySize,
+                      R_RETURN(ResultInvalidState););
+    ASSERT_OR_EXECUTE(Common::IsAligned(region->GetPairAddress(), PageSize),
+                      R_RETURN(ResultInvalidState););
+
+    // This carveout was reserved when deriving the memory layout. It is not
+    // allocated from the applet pool and must not be closed through its manager.
+    std::memset(impl->system.DeviceMemory().GetPointer<void>(region->GetAddress()), 0,
+                region->GetSize());
+    impl->secure_applet_memory_used = true;
+    impl->secure_applet_memory_lease_size = size;
+    *out = region->GetPairAddress();
+    R_SUCCEED();
+}
+
+void KernelCore::FreeSecureAppletMemory(KVirtualAddress address, size_t size) {
+    std::scoped_lock lk{impl->secure_applet_memory_lock};
+    const auto* region = MemoryLayout().GetPhysicalMemoryRegionTree().FindFirstDerived(
+        KMemoryRegionType_DramKernelSecureAppletMemory);
+    ASSERT_OR_EXECUTE(region != nullptr, return;);
+    ASSERT_OR_EXECUTE(impl->secure_applet_memory_used, return;);
+    ASSERT_OR_EXECUTE(GetInteger(address) == region->GetPairAddress(), return;);
+    ASSERT_OR_EXECUTE(Common::IsAligned(size, PageSize), return;);
+    ASSERT_OR_EXECUTE(size == impl->secure_applet_memory_lease_size, return;);
+
+    impl->secure_applet_memory_used = false;
+    impl->secure_applet_memory_lease_size = 0;
 }
 
 bool KernelCore::IsPhantomModeForSingleCore() const {

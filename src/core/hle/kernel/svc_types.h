@@ -157,11 +157,12 @@ enum class InfoType : u32 {
     IsSvcPermitted = 26,
     IoRegionHint = 27,
     AliasRegionExtraSize = 28,
+    AddressSpaceSize = 36,
+    ShadowStackRegionAddress = 37,
+    ShadowStackRegionSize = 38,
 
     TransferMemoryHint = 34,
 
-    Unknown37 = 37,
-    Unknown38 = 38,
 
     MesosphereMeta = 65000,
     MesosphereCurrentProcess = 65001,

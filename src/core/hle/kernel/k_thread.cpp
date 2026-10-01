@@ -436,14 +436,16 @@ namespace Kernel {
             }
         }
 
-        // Acquire the scheduler lock.
-        KScopedSchedulerLock sl{kernel};
+        {
+            // Signal waiters while protected by the scheduler lock.
+            KScopedSchedulerLock sl{kernel};
+            m_signaled = true;
+            KSynchronizationObject::NotifyAvailable(kernel);
+        }
 
-        // Signal.
-        m_signaled = true;
-        KSynchronizationObject::NotifyAvailable(kernel);
-
-        // Close the thread.
+        // Finalization unregisters this thread from its process and may wait
+        // on the process list lock. Release the scheduler lock first so its
+        // owner can run and the finalizer's wait queue stays alive.
         this->Close(kernel);
     }
 

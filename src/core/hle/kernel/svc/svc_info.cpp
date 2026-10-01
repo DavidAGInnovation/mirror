@@ -40,8 +40,11 @@ Result GetInfo(Core::System& system, u64* result, InfoType info_id_type, Handle 
     case InfoType::UsedNonSystemMemorySize:
     case InfoType::IsApplication:
     case InfoType::FreeThreadCount:
-    case InfoType::AliasRegionExtraSize: {
-        R_UNLESS(info_sub_id == 0, ResultInvalidEnumValue);
+    case InfoType::AliasRegionExtraSize:
+    case InfoType::AddressSpaceSize:
+    case InfoType::ShadowStackRegionAddress:
+    case InfoType::ShadowStackRegionSize: {
+        R_UNLESS(info_sub_id == 0, ResultInvalidCombination);
 
         const auto& handle_table = GetCurrentProcess(system.Kernel()).GetHandleTable();
         KScopedAutoObject process = handle_table.GetObject<KProcess>(system.Kernel(), handle);
@@ -78,6 +81,20 @@ Result GetInfo(Core::System& system, u64* result, InfoType info_id_type, Handle 
         case InfoType::StackRegionSize:
             *result = process->GetPageTable().GetStackRegionSize();
             R_SUCCEED();
+
+        case InfoType::AddressSpaceSize:
+            *result = process->GetPageTable().GetAddressSpaceSize();
+            R_SUCCEED();
+
+        case InfoType::ShadowStackRegionAddress:
+        case InfoType::ShadowStackRegionSize:
+            // The current process layout does not enable or reserve a shadow
+            // stack. Like Horizon for a process without EnableShadowStack,
+            // both queries return zero. Firmware 23 SDKs query this even when
+            // the NPDM leaves shadow stacks disabled.
+            *result = 0;
+            R_SUCCEED();
+
         case InfoType::TotalMemorySize:
             *result = process->GetTotalUserPhysicalMemorySize(system.Kernel());
             R_SUCCEED();
@@ -208,13 +225,6 @@ Result GetInfo(Core::System& system, u64* result, InfoType info_id_type, Handle 
 
         // Get the idle tick count.
         *result = system.Kernel().CurrentScheduler()->GetIdleThread()->GetCpuTime();
-        R_SUCCEED();
-    }
-    case InfoType::Unknown37:
-    case InfoType::Unknown38: {
-        LOG_WARNING(Kernel_SVC, "(STUBBED) called, info_id={:#x}, info_sub_id={:#x}, handle={:#08x}",
-                    info_id, info_sub_id, handle);
-        *result = 0;
         R_SUCCEED();
     }
     case InfoType::MesosphereMeta: {
