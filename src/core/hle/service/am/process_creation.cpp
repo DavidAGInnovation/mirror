@@ -56,6 +56,29 @@ namespace {
 
 } // Anonymous namespace
 
+AppletProgramId ResolveGuestAppletProgramId(AppletProgramId legacy_program_id,
+                                            const FileSys::ContentProvider& storage) {
+    // Since firmware 22, the legacy browser NCAs are exit-only stubs. AM
+    // dispatches the same applet IDs to openWeb or systemWeb instead.
+    AppletProgramId replacement;
+    switch (legacy_program_id) {
+    case AppletProgramId::Web:
+    case AppletProgramId::WebAuth:
+        replacement = AppletProgramId::OpenWeb;
+        break;
+    case AppletProgramId::LoginShare:
+        replacement = AppletProgramId::SystemWeb;
+        break;
+    default:
+        return legacy_program_id;
+    }
+
+    // Use installed content, retaining the original mapping on older firmware.
+    return storage.HasEntry(static_cast<u64>(replacement), FileSys::ContentRecordType::Program)
+               ? replacement
+               : legacy_program_id;
+}
+
 std::unique_ptr<Process> CreateProcess(Core::System& system, u64 program_id, u8 minimum_key_generation, u8 maximum_key_generation) {
     // Attempt to load program NCA.
     FileSys::VirtualFile nca_raw{};
